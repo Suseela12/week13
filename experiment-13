@@ -1,0 +1,122 @@
+%pip install -q langchain-core langchain-community langchain-text-splitters langchain-google-genai faiss-cpu sentence-transformers
+----------------------------------------------------------------------------------------------------------------------------------------
+import os
+
+from google.colab import userdata
+from langchain_core.documents import Document
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnablePassthrough, RunnableLambda
+from langchain_core.output_parsers import StrOutputParser
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_google_genai import ChatGoogleGenerativeAI
+
+print("Libraries imported successfully")
+--------------------------------------------------------------------------------------------------------------------------------
+text = """
+Climate change refers to long-term changes in temperature
+and weather patterns. Burning fossil fuels increases
+greenhouse gases and contributes to global warming.
+
+Climate change causes rising temperatures, melting glaciers,
+rising sea levels, and more frequent extreme weather events.
+Floods, droughts, heatwaves, and storms can damage homes,
+agriculture, roads, and other infrastructure.
+
+Rising sea levels threaten coastal cities and communities.
+Melting polar ice caps and the expansion of warmer ocean
+water contribute to sea level rise.
+
+Climate change also affects wildlife, forests, and marine
+ecosystems. Changes in rainfall and temperature can reduce
+crop yields and create challenges for farmers.
+
+People can reduce climate change by using renewable energy,
+saving electricity, planting trees, protecting forests,
+and using public transportation.
+"""
+--------------------------------------------------------------------------
+splitter = RecursiveCharacterTextSplitter(
+    chunk_size=300,
+    chunk_overlap=30
+)
+
+documents = splitter.create_documents([text])
+
+print("Number of chunks:", len(documents))
+----------------------------------------------------------------------------------------------
+
+embeddings = HuggingFaceEmbeddings(
+    model_name="sentence-transformers/all-MiniLM-L6-v2"
+)
+
+vectorstore = FAISS.from_documents(
+    documents=documents,
+    embedding=embeddings
+)
+
+print("FAISS vector store created successfully")
+-----------------------------------------------------------------------------------------
+retriever = vectorstore.as_retriever(
+    search_kwargs={"k": 2}
+)
+
+print("Retriever created successfully")
+--------------------------------------------------------------------------------------
+os.environ["GOOGLE_API_KEY"] = userdata.get("GEMINI_API_KEY")
+
+llm = ChatGoogleGenerativeAI(
+    model="gemini-3.8-flash",
+    temperature=0
+)
+
+print("LLM configured successfully")
+-------------------------------------------------------------------------------------------
+prompt = ChatPromptTemplate.from_template("""
+You are a helpful assistant. Answer the question using ONLY
+the context below. If the answer is not available in the
+context, say "I don't know based on the provided text."
+
+Context:
+{context}
+
+Question:
+{question}
+
+Answer:
+""")
+
+def format_docs(docs):
+    return "\n\n".join(doc.page_content for doc in docs)
+
+rag_chain = (
+    {
+        "context": retriever | RunnableLambda(format_docs),
+        "question": RunnablePassthrough()
+    }
+    | prompt
+    | llm
+    | StrOutputParser()
+)
+
+print("RAG chain created successfully")
+---------------------------------------------------------------------------------------------
+questions = [
+    "What are the effects of climate change?",
+    "How can people reduce climate change?"
+]
+
+for question in questions:
+    print("=" * 60)
+    print("Question:", question)
+
+    retrieved_docs = retriever.invoke(question)
+
+    print("\nRetrieved Context:")
+    for doc in retrieved_docs:
+        print("-", doc.page_content)
+
+    print("\nLLM answer skipped: API quota unavailable.")
+
+print("Climate-change text loaded successfully")
